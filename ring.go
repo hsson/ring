@@ -29,8 +29,11 @@ var ErrKeyNotFound = errors.New("hsson/ring: key not found")
 // is valid, identified by ID. The key pair expires at the ExpiresAt
 // time. After expired, it can no longer be used to verify data.
 type SigningKey struct {
-	ID        string
-	Key       *rsa.PrivateKey
+	// ID is a unique identifier for a keypair
+	ID string
+	// Key is the actual RSA key used for signing data
+	Key *rsa.PrivateKey
+	// ExpiresAt is when the signing key will be rotated
 	ExpiresAt time.Time
 }
 
@@ -45,23 +48,23 @@ type Options struct {
 	// TTL defines how long signing keys will be active before they are
 	// replaced with a new key. The TTL directly defines how long
 	// a private key will be kept, while a public key will be kept
-	// 2x TTL.
+	// 2x TTL. Default: 1 hour
 	TTL time.Duration
 
 	// CheckInterval defines how often the the TTL of keys should be checked.
-	// Defaults to TTL/2.
+	// Defaults to TTL/2. Default: TTL/2
 	CheckInterval time.Duration
 
-	// KeySize defines the size in bits of the generated keys
+	// KeySize defines the size in bits of the generated keys. Default: 2048
 	KeySize int
 
-	// ErrorLogger is used to log errors
+	// ErrorLogger is used to log errors. Default: <nil>
 	ErrorLogger ErrorLogger
 
-	// IDAlphabet defines which characters are used to generate key IDs
+	// IDAlphabet defines which characters are used to generate key IDs. Default: a...zA...Z
 	IDAlphabet string
 
-	// IDLength determines the length of key IDs
+	// IDLength determines the length of key IDs. Default: 8
 	IDLength int
 }
 
@@ -79,7 +82,11 @@ var defaultOptions = Options{
 // Keychain is used to automatically manage asymmetric keys in a
 // secure and easy-to-manage way.
 type Keychain interface {
+	// SigningKey returns a fresh key which can be used for signing data. The
+	// keypair is uniquely identified by an ID.
 	SigningKey() *SigningKey
+	// GetVerifier can be used to get the public key for a specific keypair
+	// identified by an ID.
 	GetVerifier(id string) (*rsa.PublicKey, error)
 }
 
