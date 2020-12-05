@@ -131,9 +131,7 @@ func NewWithOptions(store store.Store, options Options) Keychain {
 		store:   store,
 		options: options,
 
-		keyOnce:            &sync.Once{},
-		keyOnceReplaceLock: &sync.Mutex{},
-		keyOnceResult:      &sync.Map{},
+		rotatehOnce: &onceErr{},
 	}
 
 	if !store.HandlesTTL() {
@@ -172,9 +170,7 @@ type ring struct {
 
 	currentSigningKey atomic.Value
 
-	keyOnce            *sync.Once
-	keyOnceReplaceLock *sync.Mutex
-	keyOnceResult      *sync.Map
+	rotatehOnce *onceErr
 }
 
 func (r *ring) errorf(format string, values ...interface{}) {
@@ -320,9 +316,9 @@ func (r *ring) SigningKey() (*SigningKey, error) {
 	}
 
 	if time.Now().After(key.ExpiresAt) {
-		err := r.generateNewSigningKey(key.ID)
+		err := r.rotateSigningKey()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %v", ErrKeyRotation, err)
 		}
 		return r.SigningKey()
 	}
@@ -350,72 +346,30 @@ func (r *ring) GetVerifier(id string) (*rsa.PublicKey, error) {
 	return pub, nil
 }
 
-func (r *ring) generateNewSigningKey(keyToRefreshID string) error {
-	r.keyOnce.Do(func() {
-		r.keyOnceReplaceLock.Lock()
-		defer r.keyOnceReplaceLock.Unlock()
+func (r *ring) rotateSigningKey() error {
+	return r.rotatehOnce.do(func() error {
 		defer func() {
-			// Reset "once"
-			r.keyOnce = &sync.Once{}
+			r.rotatehOnce = &onceErr{}
 		}()
-		val := r.currentSigningKey.Load()
-		if val == nil {
-			panic("not initialized")
-		}
-		key, ok := val.(*SigningKey)
-		if !ok {
-			panic("stored signing key has incorrect type")
-		}
-		if key.ID != keyToRefreshID {
-			// Some other key was already stored
-			r.errorf("another key was stored in between refreshing")
-			return
-		}
 
 		newSigningKey, err := r.createNewSigningKey()
 		if err != nil {
 			r.errorf("failed to generate a new signing key: %v", err)
-			r.keyOnceResult.Store(keyToRefreshID, err)
-			return
+			return err
 		}
 
 		privateStoreKey, publicStoreKey, err := r.createStoreKeyPairFromSigningKey(newSigningKey)
 		if err != nil {
 			r.errorf("failed to create key pair from new signing key: %v", err)
-			r.keyOnceResult.Store(keyToRefreshID, err)
-			return
+			return err
 		}
 
 		if err = r.storeKeyPair(privateStoreKey, publicStoreKey); err != nil {
 			r.errorf("failed to store key pair: %v", err)
-			r.keyOnceResult.Store(keyToRefreshID, err)
-			return
+			return err
 		}
 
 		r.currentSigningKey.Store(newSigningKey)
-		r.keyOnceResult.Store(keyToRefreshID, nil) // No error
-
-		time.AfterFunc(5*time.Minute, func() {
-			// After 5 minutes, delete the entry from keyOnceResult
-			// to not cause a memory leak
-			// TODO: Explore better memory managemnet solution (reference counting?)
-			r.keyOnceResult.Delete(keyToRefreshID)
-		})
-	})
-
-	errVal, found := r.keyOnceResult.Load(keyToRefreshID)
-	if !found {
-		// the result value has already been cleaned up, so we don't know if it
-		// went well or not, so we can not assume it went well
-		r.errorf("could not determine key generation result")
-		return ErrKeyRotation
-	}
-	if errVal == nil {
 		return nil
-	}
-	err, ok := errVal.(error)
-	if !ok {
-		panic("stored value was not an error")
-	}
-	return err
+	})
 }
