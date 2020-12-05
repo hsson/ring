@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hsson/once"
 	"github.com/hsson/ring/store"
 	nanoid "github.com/matoous/go-nanoid/v2"
 )
@@ -131,7 +132,7 @@ func NewWithOptions(store store.Store, options Options) Keychain {
 		store:   store,
 		options: options,
 
-		rotatehOnce: &onceErr{},
+		rotatehOnce: &once.Error{},
 	}
 
 	if !store.HandlesTTL() {
@@ -170,7 +171,7 @@ type ring struct {
 
 	currentSigningKey atomic.Value
 
-	rotatehOnce *onceErr
+	rotatehOnce *once.Error
 }
 
 func (r *ring) errorf(format string, values ...interface{}) {
@@ -347,9 +348,9 @@ func (r *ring) GetVerifier(id string) (*rsa.PublicKey, error) {
 }
 
 func (r *ring) rotateSigningKey() error {
-	return r.rotatehOnce.do(func() error {
+	return r.rotatehOnce.Do(func() error {
 		defer func() {
-			r.rotatehOnce = &onceErr{}
+			r.rotatehOnce = &once.Error{}
 		}()
 
 		newSigningKey, err := r.createNewSigningKey()
