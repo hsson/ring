@@ -50,8 +50,4 @@ type Store interface {
 
 	// List returns all currently stored keys.
 	List() (KeyList, error)
-
-	// HandlesTTL indicates if the Store implementation will be
-	// responsible for making clearing out expired keys from persistence.
-	HandlesTTL() bool
 }

@@ -25,12 +25,6 @@ func getStore() store.Store {
 	return inmem.NewInMemoryStore()
 }
 
-func TestHandlesTTL(t *testing.T) {
-	if getStore().HandlesTTL() {
-		t.Errorf("did not expect store to handle TTL")
-	}
-}
-
 func TestAddAndFind(t *testing.T) {
 	s := getStore()
 

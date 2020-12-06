@@ -2,6 +2,7 @@ package inmem
 
 import (
 	"sync"
+	"time"
 
 	"github.com/hsson/ring"
 	"github.com/hsson/ring/store"
@@ -10,9 +11,12 @@ import (
 // NewInMemoryStore creates a new in-memory storage
 // container which can be used with the ring keychain.
 func NewInMemoryStore() store.Store {
-	return &inmemStore{
+	store := &inmemStore{
 		data: make(map[string]store.Key),
 	}
+	ticker := time.NewTicker(5 * time.Minute)
+	go checkForTTL(ticker, store)
+	return store
 }
 
 type inmemStore struct {
@@ -68,8 +72,4 @@ func (s *inmemStore) List() (store.KeyList, error) {
 		i++
 	}
 	return all, nil
-}
-
-func (s *inmemStore) HandlesTTL() bool {
-	return false
 }

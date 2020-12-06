@@ -55,10 +55,6 @@ type Options struct {
 	// 2x TTL. Default: 1 hour
 	TTL time.Duration
 
-	// CheckInterval defines how often the the TTL of keys should be checked.
-	// Defaults to TTL/2. Default: TTL/2
-	CheckInterval time.Duration
-
 	// KeySize defines the size in bits of the generated keys. Default: 2048
 	KeySize int
 
@@ -73,9 +69,8 @@ type Options struct {
 }
 
 var defaultOptions = Options{
-	TTL:           1 * time.Hour,
-	CheckInterval: 30 * time.Minute,
-	KeySize:       2048,
+	TTL:     1 * time.Hour,
+	KeySize: 2048,
 
 	ErrorLogger: nil,
 
@@ -107,10 +102,6 @@ func NewWithOptions(store store.Store, options Options) Keychain {
 		options.TTL = defaultOptions.TTL
 	}
 
-	if options.CheckInterval == 0 {
-		options.CheckInterval = options.TTL / 2
-	}
-
 	if options.KeySize == 0 {
 		options.KeySize = defaultOptions.KeySize
 	}
@@ -134,34 +125,8 @@ func NewWithOptions(store store.Store, options Options) Keychain {
 		rotatehOnce: &once.ValueError{},
 	}
 
-	if !store.HandlesTTL() {
-		ticker := time.NewTicker(options.CheckInterval)
-		go periodicCheck(ticker, keychain)
-	}
-
 	keychain.initialize()
 	return keychain
-}
-
-func periodicCheck(ticker *time.Ticker, r *ring) {
-	for {
-		<-ticker.C
-		now := time.Now()
-		keys, err := r.store.List()
-		if err != nil {
-			r.errorf("could not list keys when doing periodic TTL check: %v", err)
-			continue
-		}
-		for _, key := range keys {
-			if now.After(key.ExpiresAt) {
-				if err := r.store.Delete(key.ID); err != nil {
-					if !errors.Is(err, ErrKeyNotFound) {
-						r.errorf("got unknown error when trying to delete expired key: %v", err)
-					}
-				}
-			}
-		}
-	}
 }
 
 type ring struct {
