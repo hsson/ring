@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -27,9 +28,8 @@ var ErrKeyNotFound = errors.New("hsson/ring: key not found")
 var ErrKeyRotation = errors.New("hsson/ring: could not rotate expired key")
 
 // SigningKey is used to sign new data. It has a corresponding
-// verification key which can be used to verify that the data signed
-// is valid, identified by ID. The key pair expires at the ExpiresAt
-// time. After expired, it can no longer be used to verify data.
+// VerifierKey which can be used to verify that the data signed
+// is valid, identified by ID.
 type SigningKey struct {
 	// ID is a unique identifier for a keypair
 	ID string
@@ -41,6 +41,17 @@ type SigningKey struct {
 	// the signing key will expire, and thus any data signed with it
 	// won't be verifiable after this time.
 	VerifiableUntil time.Time
+}
+
+// VerifierKey is the public part only of a SigningKey
+type VerifierKey struct {
+	// ID is a unique identifier for a keypair
+	ID string
+	// Key is the actual RSA public key used for verifying data signature
+	Key *rsa.PublicKey
+	// ExpiresAt is when this verification key will no longer be usable for
+	// verifying data, as it will have been cleared from storage.
+	ExpiresAt time.Time
 }
 
 // Options can be specified to customize the behavior of the Keychain
@@ -85,6 +96,8 @@ type Keychain interface {
 	// GetVerifier can be used to get the public key for a specific keypair
 	// identified by an ID.
 	GetVerifier(id string) (*rsa.PublicKey, error)
+	// ListPublicKeys lists all currently active public keys
+	ListVerifiers() ([]*VerifierKey, error)
 }
 
 // New creates a new Keychain with a given store used to persist
@@ -141,7 +154,7 @@ type ring struct {
 }
 
 func (r *ring) initialize() {
-	privateKeys, err := r.getNonExpiredPrivateKeysSortedByExpiryDate()
+	privateKeys, err := r.getNonExpiredPrivateKeys()
 	if err != nil {
 		panic(fmt.Errorf("failed to get private keys: %w", err))
 	}
@@ -221,6 +234,31 @@ func (r *ring) GetVerifier(id string) (*rsa.PublicKey, error) {
 		return nil, ErrKeyNotFound
 	}
 	return pub, nil
+}
+
+func (r *ring) ListVerifiers() ([]*VerifierKey, error) {
+	var res []*VerifierKey
+	keys, err := r.getNonExpiredPublicKeys()
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		untyped, err := x509.ParsePKIXPublicKey(key.Data)
+		if err != nil {
+			return nil, err
+		}
+		pub, ok := untyped.(*rsa.PublicKey)
+		if !ok {
+			// Should not happen
+			return nil, errors.New("stored public key has unknown type")
+		}
+		res = append(res, &VerifierKey{
+			ID:        strings.TrimPrefix(key.ID, publicKeyIDPrefix),
+			Key:       pub,
+			ExpiresAt: key.ExpiresAt,
+		})
+	}
+	return res, nil
 }
 
 func (r *ring) rotateSigningKey() (*SigningKey, error) {

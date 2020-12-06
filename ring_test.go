@@ -90,3 +90,50 @@ func TestShouldReusePreviousKeyIfNotExpired(t *testing.T) {
 		t.Errorf("got key mismatch, got %v want %v", key2.ID, key1.ID)
 	}
 }
+
+func TestListVerifierKeys(t *testing.T) {
+	store := inmem.NewInMemoryStore()
+
+	r := ring.NewWithOptions(store, ring.Options{
+		RotationFrequency:  200 * time.Millisecond,
+		VerificationPeriod: 1 * time.Minute,
+	})
+
+	key1, err := r.SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(250 * time.Millisecond)
+
+	key4, err := r.SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifiers, err := r.ListVerifiers()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(verifiers) != 2 {
+		t.Errorf("unexpected length, got %v want %v", len(verifiers), 2)
+	}
+
+	if verifiers[0].ID != key1.ID {
+		t.Errorf("expected first verifier to belong to first key generated, got %v want %v",
+			verifiers[0].ID, key1.ID)
+	}
+
+	if verifiers[1].ID != key4.ID {
+		t.Errorf("expected second verifier to belong to second key generated, got %v want %v",
+			verifiers[1].ID, key4.ID)
+	}
+}

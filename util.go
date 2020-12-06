@@ -70,19 +70,27 @@ func (r *ring) createNewSigningKey() (*SigningKey, error) {
 	return &signingKey, nil
 }
 
-func (r *ring) getNonExpiredPrivateKeysSortedByExpiryDate() (store.KeyList, error) {
+func (r *ring) getNonExpiredPrivateKeys() (store.KeyList, error) {
+	return r.getNonExpiredKeys(true)
+}
+
+func (r *ring) getNonExpiredPublicKeys() (store.KeyList, error) {
+	return r.getNonExpiredKeys(false)
+}
+
+func (r *ring) getNonExpiredKeys(private bool) (store.KeyList, error) {
 	allKeys, err := r.store.List()
 	if err != nil {
 		return store.KeyList{}, err
 	}
-	var allPrivateKeys store.KeyList
+	var allPrivateOrPublicKeys store.KeyList
 	now := time.Now()
 	for _, key := range allKeys {
-		if key.IsPrivate && key.ExpiresAt.After(now) {
-			allPrivateKeys = append(allPrivateKeys, key)
+		if key.IsPrivate == private && key.ExpiresAt.After(now) {
+			allPrivateOrPublicKeys = append(allPrivateOrPublicKeys, key)
 		}
 	}
 
-	allPrivateKeys.SortByExpiresAt()
-	return allPrivateKeys, nil
+	allPrivateOrPublicKeys.SortByExpiresAt()
+	return allPrivateOrPublicKeys, nil
 }
