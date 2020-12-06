@@ -1,7 +1,6 @@
 package ring
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/hsson/once"
 	"github.com/hsson/ring/store"
-	nanoid "github.com/matoous/go-nanoid/v2"
 )
 
 const (
@@ -37,31 +35,42 @@ type SigningKey struct {
 	ID string
 	// Key is the actual RSA key used for signing data
 	Key *rsa.PrivateKey
-	// ExpiresAt is when the signing key will be rotated
-	ExpiresAt time.Time
+	// RotatedAt is when the signing key will be rotated
+	RotatedAt time.Time
+	// VerifiableUntil is the time when the public-key equivalent of
+	// the signing key will expire, and thus any data signed with it
+	// won't be verifiable after this time.
+	VerifiableUntil time.Time
 }
 
 // Options can be specified to customize the behavior of the Keychain
 type Options struct {
-	// TTL defines how long signing keys will be active before they are
-	// replaced with a new key. The TTL directly defines how long
-	// a private key will be kept, while a public key will be kept
-	// 2x TTL. Default: 1 hour
-	TTL time.Duration
+	// RotationFrequency defines how long signing keys will be active
+	// before they are replaced with a new key. Default: 1 hour
+	RotationFrequency time.Duration
+
+	// VerificationPeriod defines how long data will be able to be verified.
+	// After this time, the public key is deleted. Must be longer than
+	// RotationFrequency, preferably at least 2x RotationFrequency.
+	// Default: RotationFrequency * 2
+	VerificationPeriod time.Duration
 
 	// KeySize defines the size in bits of the generated keys. Default: 2048
 	KeySize int
 
-	// IDAlphabet defines which characters are used to generate key IDs. Default: a...zA...Z
+	// IDAlphabet defines which characters are used to generate keypair IDs.
+	// Does NOT support regex syntax, you must specify all characters.
+	// Default: a...zA...Z
 	IDAlphabet string
 
-	// IDLength determines the length of key IDs. Default: 8
+	// IDLength determines the length of keypair IDs. Default: 8
 	IDLength int
 }
 
 var defaultOptions = Options{
-	TTL:     1 * time.Hour,
-	KeySize: 2048,
+	RotationFrequency:  1 * time.Hour,
+	VerificationPeriod: 2 * time.Hour,
+	KeySize:            2048,
 
 	IDAlphabet: defaultIDAlphabet,
 	IDLength:   defaultIDLength,
@@ -87,8 +96,16 @@ func New(store store.Store) Keychain {
 // NewWithOptions creates a new Keychain with a given store used to
 // persist generated keys and together with custom options
 func NewWithOptions(store store.Store, options Options) Keychain {
-	if options.TTL == 0 {
-		options.TTL = defaultOptions.TTL
+	if options.RotationFrequency == 0 {
+		options.RotationFrequency = defaultOptions.RotationFrequency
+	}
+
+	if options.VerificationPeriod == 0 {
+		options.VerificationPeriod = options.RotationFrequency * 2
+	}
+
+	if options.VerificationPeriod < options.RotationFrequency {
+		panic("VerificationPeriod must be at >= RotationFrequency")
 	}
 
 	if options.KeySize == 0 {
@@ -139,9 +156,10 @@ func (r *ring) initialize() {
 			panic(fmt.Errorf("key has invalid type: %w", err))
 		}
 		signingKey := &SigningKey{
-			ID:        keyToUse.ID,
-			ExpiresAt: keyToUse.ExpiresAt,
-			Key:       privateKey,
+			ID:              keyToUse.ID,
+			RotatedAt:       keyToUse.ExpiresAt,
+			VerifiableUntil: keyToUse.ExpiresAt.Add(r.options.VerificationPeriod).Add(-r.options.RotationFrequency),
+			Key:             privateKey,
 		}
 		r.currentSigningKey.Store(signingKey)
 	} else {
@@ -150,7 +168,7 @@ func (r *ring) initialize() {
 			panic(fmt.Sprintf("failed to create new signing key: %v", err))
 		}
 
-		privateStoreKey, publicStoreKey, err := r.createStoreKeyPairFromSigningKey(signingKey)
+		privateStoreKey, publicStoreKey, err := createStoreKeyPairFromSigningKey(signingKey)
 		if err != nil {
 			panic(fmt.Errorf("failed to create key pair from signing key: %w", err))
 		}
@@ -164,82 +182,6 @@ func (r *ring) initialize() {
 	}
 }
 
-func (r *ring) storeKeyPair(privateKey, publicKey store.Key) error {
-	if err := r.store.Add(privateKey); err != nil {
-		return err
-	}
-	if err := r.store.Add(publicKey); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *ring) createStoreKeyPairFromSigningKey(signingKey *SigningKey) (store.Key, store.Key, error) {
-	publicKeyExpiresAt := signingKey.ExpiresAt.Add(r.options.TTL)
-
-	privateKeyData, err := x509.MarshalPKCS8PrivateKey(signingKey.Key)
-	if err != nil {
-		return store.Key{}, store.Key{}, err
-	}
-
-	privateStoreKey := store.Key{
-		ID:        signingKey.ID,
-		IsPrivate: true,
-		ExpiresAt: signingKey.ExpiresAt,
-		Data:      privateKeyData,
-	}
-
-	publicKeyData, err := x509.MarshalPKIXPublicKey(&signingKey.Key.PublicKey)
-	if err != nil {
-		return store.Key{}, store.Key{}, err
-	}
-
-	publicStoreKey := store.Key{
-		ID:        fmt.Sprintf("%s%s", publicKeyIDPrefix, signingKey.ID),
-		IsPrivate: false,
-		ExpiresAt: publicKeyExpiresAt,
-		Data:      publicKeyData,
-	}
-
-	return privateStoreKey, publicStoreKey, nil
-}
-
-func (r *ring) createNewSigningKey() (*SigningKey, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, r.options.KeySize)
-	if err != nil {
-		return nil, err
-	}
-
-	id, err := nanoid.Generate(r.options.IDAlphabet, r.options.IDLength)
-	if err != nil {
-		return nil, err
-	}
-
-	signingKey := SigningKey{
-		ID:        id,
-		ExpiresAt: time.Now().Add(r.options.TTL),
-		Key:       privateKey,
-	}
-	return &signingKey, nil
-}
-
-func (r *ring) getNonExpiredPrivateKeysSortedByExpiryDate() (store.KeyList, error) {
-	allKeys, err := r.store.List()
-	if err != nil {
-		return store.KeyList{}, err
-	}
-	var allPrivateKeys store.KeyList
-	now := time.Now()
-	for _, key := range allKeys {
-		if key.IsPrivate && key.ExpiresAt.After(now) {
-			allPrivateKeys = append(allPrivateKeys, key)
-		}
-	}
-
-	allPrivateKeys.SortByExpiresAt()
-	return allPrivateKeys, nil
-}
-
 func (r *ring) SigningKey() (*SigningKey, error) {
 	val := r.currentSigningKey.Load()
 	if val == nil {
@@ -250,7 +192,7 @@ func (r *ring) SigningKey() (*SigningKey, error) {
 		panic("stored signing key has incorrect type")
 	}
 
-	if time.Now().After(key.ExpiresAt) {
+	if time.Now().After(key.RotatedAt) {
 		newKey, err := r.rotateSigningKey()
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrKeyRotation, err)
@@ -292,7 +234,7 @@ func (r *ring) rotateSigningKey() (*SigningKey, error) {
 			return nil, err
 		}
 
-		privateStoreKey, publicStoreKey, err := r.createStoreKeyPairFromSigningKey(newSigningKey)
+		privateStoreKey, publicStoreKey, err := createStoreKeyPairFromSigningKey(newSigningKey)
 		if err != nil {
 			return nil, err
 		}
