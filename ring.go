@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -132,7 +131,7 @@ func NewWithOptions(store store.Store, options Options) Keychain {
 		store:   store,
 		options: options,
 
-		rotatehOnce: &once.Error{},
+		rotatehOnce: &once.ValueError{},
 	}
 
 	if !store.HandlesTTL() {
@@ -171,7 +170,7 @@ type ring struct {
 
 	currentSigningKey atomic.Value
 
-	rotatehOnce *once.Error
+	rotatehOnce *once.ValueError
 }
 
 func (r *ring) errorf(format string, values ...interface{}) {
@@ -222,22 +221,13 @@ func (r *ring) initialize() {
 }
 
 func (r *ring) storeKeyPair(privateKey, publicKey store.Key) error {
-	var err error
-	var wg sync.WaitGroup
-
-	store := func(key store.Key) {
-		e := r.store.Add(key)
-		if err != nil {
-			err = e
-		}
-		wg.Done()
+	if err := r.store.Add(privateKey); err != nil {
+		return err
 	}
-	wg.Add(2)
-	go store(privateKey)
-	go store(publicKey)
-	wg.Wait()
-
-	return err
+	if err := r.store.Add(publicKey); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *ring) createStoreKeyPairFromSigningKey(signingKey *SigningKey) (store.Key, store.Key, error) {
@@ -317,11 +307,11 @@ func (r *ring) SigningKey() (*SigningKey, error) {
 	}
 
 	if time.Now().After(key.ExpiresAt) {
-		err := r.rotateSigningKey()
+		newKey, err := r.rotateSigningKey()
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrKeyRotation, err)
 		}
-		return r.SigningKey()
+		return newKey, nil
 	}
 
 	return key, nil
@@ -347,30 +337,34 @@ func (r *ring) GetVerifier(id string) (*rsa.PublicKey, error) {
 	return pub, nil
 }
 
-func (r *ring) rotateSigningKey() error {
-	return r.rotatehOnce.Do(func() error {
+func (r *ring) rotateSigningKey() (*SigningKey, error) {
+	val, err := r.rotatehOnce.Do(func() (interface{}, error) {
 		defer func() {
-			r.rotatehOnce = &once.Error{}
+			r.rotatehOnce = &once.ValueError{}
 		}()
 
 		newSigningKey, err := r.createNewSigningKey()
 		if err != nil {
 			r.errorf("failed to generate a new signing key: %v", err)
-			return err
+			return nil, err
 		}
 
 		privateStoreKey, publicStoreKey, err := r.createStoreKeyPairFromSigningKey(newSigningKey)
 		if err != nil {
 			r.errorf("failed to create key pair from new signing key: %v", err)
-			return err
+			return nil, err
 		}
 
 		if err = r.storeKeyPair(privateStoreKey, publicStoreKey); err != nil {
 			r.errorf("failed to store key pair: %v", err)
-			return err
+			return nil, err
 		}
 
 		r.currentSigningKey.Store(newSigningKey)
-		return nil
+		return newSigningKey, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return val.(*SigningKey), nil
 }
