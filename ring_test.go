@@ -137,3 +137,30 @@ func TestListVerifierKeys(t *testing.T) {
 			verifiers[1].ID, key4.ID)
 	}
 }
+
+func TestForceRotation(t *testing.T) {
+	store := inmem.NewInMemoryStore()
+
+	r := ring.NewWithOptions(store, ring.Options{
+		RotationFrequency: 1 * time.Hour,
+	})
+
+	key1, err := r.SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = r.Rotate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key2, err := r.SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if key1.ID == key2.ID {
+		t.Error("expected keys to have different ID, was equal")
+	}
+}

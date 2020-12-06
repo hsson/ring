@@ -98,6 +98,8 @@ type Keychain interface {
 	GetVerifier(id string) (*rsa.PublicKey, error)
 	// ListPublicKeys lists all currently active public keys
 	ListVerifiers() ([]*VerifierKey, error)
+	// Rotate forces a rotation of signing keys
+	Rotate() error
 }
 
 // New creates a new Keychain with a given store used to persist
@@ -259,6 +261,11 @@ func (r *ring) ListVerifiers() ([]*VerifierKey, error) {
 		})
 	}
 	return res, nil
+}
+
+func (r *ring) Rotate() error {
+	_, err := r.rotateSigningKey()
+	return err
 }
 
 func (r *ring) rotateSigningKey() (*SigningKey, error) {
