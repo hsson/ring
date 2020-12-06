@@ -58,9 +58,6 @@ type Options struct {
 	// KeySize defines the size in bits of the generated keys. Default: 2048
 	KeySize int
 
-	// ErrorLogger is used to log errors. Default: <nil>
-	ErrorLogger ErrorLogger
-
 	// IDAlphabet defines which characters are used to generate key IDs. Default: a...zA...Z
 	IDAlphabet string
 
@@ -71,8 +68,6 @@ type Options struct {
 var defaultOptions = Options{
 	TTL:     1 * time.Hour,
 	KeySize: 2048,
-
-	ErrorLogger: nil,
 
 	IDAlphabet: defaultIDAlphabet,
 	IDLength:   defaultIDLength,
@@ -114,10 +109,6 @@ func NewWithOptions(store store.Store, options Options) Keychain {
 		options.IDLength = defaultOptions.IDLength
 	}
 
-	if options.ErrorLogger == nil {
-		options.ErrorLogger = defaultOptions.ErrorLogger
-	}
-
 	keychain := &ring{
 		store:   store,
 		options: options,
@@ -136,12 +127,6 @@ type ring struct {
 	currentSigningKey atomic.Value
 
 	rotatehOnce *once.ValueError
-}
-
-func (r *ring) errorf(format string, values ...interface{}) {
-	if r.options.ErrorLogger != nil {
-		r.options.ErrorLogger.Errorf(format, values)
-	}
 }
 
 func (r *ring) initialize() {
@@ -310,18 +295,15 @@ func (r *ring) rotateSigningKey() (*SigningKey, error) {
 
 		newSigningKey, err := r.createNewSigningKey()
 		if err != nil {
-			r.errorf("failed to generate a new signing key: %v", err)
 			return nil, err
 		}
 
 		privateStoreKey, publicStoreKey, err := r.createStoreKeyPairFromSigningKey(newSigningKey)
 		if err != nil {
-			r.errorf("failed to create key pair from new signing key: %v", err)
 			return nil, err
 		}
 
 		if err = r.storeKeyPair(privateStoreKey, publicStoreKey); err != nil {
-			r.errorf("failed to store key pair: %v", err)
 			return nil, err
 		}
 

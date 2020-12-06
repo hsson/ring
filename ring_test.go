@@ -12,14 +12,9 @@ type logger struct {
 	t *testing.T
 }
 
-func (l *logger) Errorf(format string, values ...interface{}) {
-	l.t.Logf(format, values...)
-}
-
 func TestSigningKeyRotation(t *testing.T) {
 	r := ring.NewWithOptions(inmem.NewInMemoryStore(), ring.Options{
-		TTL:         200 * time.Millisecond,
-		ErrorLogger: &logger{t},
+		TTL: 200 * time.Millisecond,
 	})
 
 	keyOne, err := r.SigningKey()
@@ -50,8 +45,7 @@ func TestSigningKeyRotation(t *testing.T) {
 
 func TestPublicKeyRemains(t *testing.T) {
 	r := ring.NewWithOptions(inmem.NewInMemoryStore(), ring.Options{
-		TTL:         200 * time.Millisecond,
-		ErrorLogger: &logger{t},
+		TTL: 200 * time.Millisecond,
 	})
 	key, err := r.SigningKey()
 	if err != nil {
@@ -75,8 +69,7 @@ func TestShouldReusePreviousKeyIfNotExpired(t *testing.T) {
 	store := inmem.NewInMemoryStore()
 
 	r1 := ring.NewWithOptions(store, ring.Options{
-		TTL:         1 * time.Minute,
-		ErrorLogger: &logger{t},
+		TTL: 1 * time.Minute,
 	})
 
 	key1, err := r1.SigningKey()
@@ -85,8 +78,7 @@ func TestShouldReusePreviousKeyIfNotExpired(t *testing.T) {
 	}
 
 	r2 := ring.NewWithOptions(store, ring.Options{
-		TTL:         1 * time.Minute,
-		ErrorLogger: &logger{},
+		TTL: 1 * time.Minute,
 	})
 
 	key2, err := r2.SigningKey()
