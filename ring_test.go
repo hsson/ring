@@ -1,16 +1,15 @@
 package ring_test
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"testing"
 	"time"
 
 	"github.com/hsson/ring"
 	"github.com/hsson/ring/store/inmem"
 )
-
-type logger struct {
-	t *testing.T
-}
 
 func TestSigningKeyRotation(t *testing.T) {
 	r := ring.NewWithOptions(inmem.NewInMemoryStore(), ring.Options{
@@ -162,5 +161,37 @@ func TestForceRotation(t *testing.T) {
 
 	if key1.ID == key2.ID {
 		t.Error("expected keys to have different ID, was equal")
+	}
+}
+
+func TestVerifierKeyEncodeToPEM(t *testing.T) {
+	expectedPEM := `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9UAiPrB5gDIpe3q1Nby0
+cGdNEis0AkgrBO9psT+MuqHdPMi8ENUGAhxKVOkmqiOc4pGgkEp3/lxZFXADY5ny
+KH2ouvL0w08Qf76o+HoGSBVDb4gMqFaZZ7kHznRtS37rhA5a4eVWzse/5x0mi9Bf
+caJqLAFyfZPShmTITwJaiJpiecHxvptnXljC5I71urkMsD5A9p+25uGEDsLHlBEy
+4ZzY70Xl/np1hVYgtT60cybb/MGjV9p2HQlbUXA1bIdHlnTlPLFM8A2VOsi1wRP1
+Lx7NN5n1F79b6qWIxQhuGIJ0Pg1ehSEKoxvFTi7r34c0lGGBL8Bl7xMZwgn+ovA+
+wwIDDf//
+-----END PUBLIC KEY-----
+`
+	pemBlock, _ := pem.Decode([]byte(expectedPEM))
+	untyped, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsaPublic, ok := untyped.(*rsa.PublicKey)
+	if !ok {
+		t.Fatal("not rsa public key")
+	}
+	verifierKey := &ring.VerifierKey{
+		ID:        "some id",
+		Key:       rsaPublic,
+		ExpiresAt: time.Now().Add(5 * time.Hour),
+	}
+
+	verifierKeyPEM := verifierKey.EncodeToPEM()
+	if string(verifierKeyPEM) != expectedPEM {
+		t.Errorf("PEM is not matching, got:\n%v\nwant:\n%v", string(verifierKeyPEM), expectedPEM)
 	}
 }

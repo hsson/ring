@@ -3,6 +3,7 @@ package ring
 import (
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
@@ -54,6 +55,18 @@ type VerifierKey struct {
 	ExpiresAt time.Time
 }
 
+// EncodeToPEM encodes the verifier public key in PEM format
+func (vk *VerifierKey) EncodeToPEM() []byte {
+	bytes, err := x509.MarshalPKIXPublicKey(vk.Key)
+	if err != nil {
+		panic("failed to marshal public key")
+	}
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: bytes,
+	})
+}
+
 // Options can be specified to customize the behavior of the Keychain
 type Options struct {
 	// RotationFrequency defines how long signing keys will be active
@@ -95,7 +108,7 @@ type Keychain interface {
 	SigningKey() (*SigningKey, error)
 	// GetVerifier can be used to get the public key for a specific keypair
 	// identified by an ID.
-	GetVerifier(id string) (*rsa.PublicKey, error)
+	GetVerifier(id string) (*VerifierKey, error)
 	// ListPublicKeys lists all currently active public keys
 	ListVerifiers() ([]*VerifierKey, error)
 	// Rotate forces a rotation of signing keys
@@ -218,7 +231,7 @@ func (r *ring) SigningKey() (*SigningKey, error) {
 	return key, nil
 }
 
-func (r *ring) GetVerifier(id string) (*rsa.PublicKey, error) {
+func (r *ring) GetVerifier(id string) (*VerifierKey, error) {
 	key, err := r.store.Find(fmt.Sprintf("%s%s", publicKeyIDPrefix, id))
 	if err != nil {
 		return nil, err
@@ -235,7 +248,11 @@ func (r *ring) GetVerifier(id string) (*rsa.PublicKey, error) {
 	if !ok {
 		return nil, ErrKeyNotFound
 	}
-	return pub, nil
+	return &VerifierKey{
+		ID:        id,
+		Key:       pub,
+		ExpiresAt: key.ExpiresAt,
+	}, nil
 }
 
 func (r *ring) ListVerifiers() ([]*VerifierKey, error) {
