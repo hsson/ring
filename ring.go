@@ -41,12 +41,6 @@ type SigningKey struct {
 	ExpiresAt time.Time
 }
 
-// ErrorLogger abstracts a generic logger which ring will use to
-// log eventual non criticial errors to
-type ErrorLogger interface {
-	Errorf(format string, values ...interface{})
-}
-
 // Options can be specified to customize the behavior of the Keychain
 type Options struct {
 	// TTL defines how long signing keys will be active before they are
