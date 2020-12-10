@@ -7,7 +7,7 @@
 Automatically rotate signing keys with ease.
 
 ## Thread safety
-`hsson/ring` is completely thread safe. If using `hsson/ring` in just a single instance of your application, there will only ever be a single signing key active at any given time. However, there are no cross-instance/node synchronization, so if using `hsson/ring` on multiple instances of your application, there might be more than a single signing key active at a given moment, this is however completely fine, it will just add more data in your database.
+`hsson/ring` is completely thread safe. Distributed locking, using a fencing method, is implemented to make sure that there is ever only a single signing key active at any given time. This means that `hsson/ring` can safely be used in a multi-node environment.
 
 ## Examples
 ### Example of JWT signing with `dgrijalva/jwt-go`
