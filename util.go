@@ -39,16 +39,6 @@ func createStoreKeyPairFromSigningKey(signingKey *SigningKey) (store.Key, store.
 	return privateStoreKey, publicStoreKey, nil
 }
 
-func (r *ring) storeKeyPair(privateKey, publicKey store.Key) error {
-	if err := r.store.Add(privateKey); err != nil {
-		return err
-	}
-	if err := r.store.Add(publicKey); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (r *ring) createNewSigningKey() (*SigningKey, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, r.options.KeySize)
 	if err != nil {
@@ -93,4 +83,22 @@ func (r *ring) getNonExpiredKeys(private bool) (store.KeyList, error) {
 
 	allPrivateOrPublicKeys.SortByExpiresAt()
 	return allPrivateOrPublicKeys, nil
+}
+
+func (r *ring) storedPrivateKeyToSigningKey(storedKey store.Key) (*SigningKey, error) {
+	untyped, err := x509.ParsePKCS8PrivateKey(storedKey.Data)
+	if err != nil {
+		return nil, fmt.Errorf("private key data could not be parsed: %w", err)
+	}
+	privateKey, ok := untyped.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("key has invalid type: %w", err)
+	}
+	signingKey := &SigningKey{
+		ID:              storedKey.ID,
+		RotatedAt:       storedKey.ExpiresAt,
+		VerifiableUntil: storedKey.ExpiresAt.Add(r.options.VerificationPeriod).Add(-r.options.RotationFrequency),
+		Key:             privateKey,
+	}
+	return signingKey, nil
 }

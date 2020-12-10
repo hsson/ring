@@ -10,7 +10,21 @@ var (
 	// ErrKeyIDConflict is returned if trying to add a key to the store
 	// with an occupied ID.
 	ErrKeyIDConflict = errors.New("hsson/ring: key id conflict")
+
+	// ErrInvalidLock is returned if trying to store a key
+	// with an expired or non-existing LockToken
+	ErrInvalidLock = errors.New("hsson/ring: invalid lock")
+
+	// ErrLockOccupied is returned if trying to get a lock that is
+	// already occupied.
+	ErrLockOccupied = errors.New("hsson/ring: lock occupied")
 )
+
+// LockToken represents a unique identifier for a distributed lock
+type LockToken string
+
+// NilLock represents the zero-value of a LockToken
+var NilLock LockToken = LockToken("")
 
 // Key is a simple representation of either a private or a public key
 // used in cryptography.
@@ -36,8 +50,10 @@ type Store interface {
 	// Add a key into the store. If the store natively supports TTL
 	// (such as Redis), the key can safely be set to expire on the time
 	// specified by the key's ExpiresAt property. If there is an ID
-	// conflict, the ErrKeyIDConflict error should be returned.
-	Add(key Key) error
+	// conflict, the ErrKeyIDConflict error should be returned. If
+	// the provided LockToken is invalid, ErrInvalidLock should be
+	// returned.
+	Add(lock LockToken, keys ...Key) error
 
 	// Find returns a previously saved key, indentifed by the provided id.
 	// If the key is not found, the ring.ErrKeyNotFound should be returned
@@ -50,4 +66,15 @@ type Store interface {
 
 	// List returns all currently stored keys.
 	List() (KeyList, error)
+
+	// Lock will attempt to acquire a lock used for storing data. If the lock
+	// can not be acuired because the lock is occupied, Lock() should immediately
+	// return with a ErrLockOccupied error. If successfully getting a lock,
+	// it should be unlocked immediately after being done with it. The lock
+	// will expire if too long time elapses before unlocking.
+	Lock() (LockToken, error)
+
+	// Unlock will unlock a locked lock, given its unique token. If the lock
+	// identified by the token is already unlocked, no error is returned.
+	Unlock(lock LockToken) error
 }

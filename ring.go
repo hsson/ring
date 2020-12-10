@@ -173,40 +173,46 @@ func (r *ring) initialize() {
 	if err != nil {
 		panic(fmt.Errorf("failed to get private keys: %w", err))
 	}
-	if len(privateKeys) != 0 {
-		keyToUse := privateKeys[0]
-		untyped, err := x509.ParsePKCS8PrivateKey(keyToUse.Data)
+	if len(privateKeys) > 0 {
+		signingKey, err := r.storedPrivateKeyToSigningKey(privateKeys[0])
 		if err != nil {
-			panic(fmt.Errorf("private key data could not be parsed: %w", err))
-		}
-		privateKey, ok := untyped.(*rsa.PrivateKey)
-		if !ok {
-			panic(fmt.Errorf("key has invalid type: %w", err))
-		}
-		signingKey := &SigningKey{
-			ID:              keyToUse.ID,
-			RotatedAt:       keyToUse.ExpiresAt,
-			VerifiableUntil: keyToUse.ExpiresAt.Add(r.options.VerificationPeriod).Add(-r.options.RotationFrequency),
-			Key:             privateKey,
+			panic(err)
 		}
 		r.currentSigningKey.Store(signingKey)
 	} else {
-		signingKey, err := r.createNewSigningKey()
+		lock, err := r.store.Lock()
 		if err != nil {
-			panic(fmt.Sprintf("failed to create new signing key: %v", err))
+			panic(err)
 		}
+		defer r.store.Unlock(lock)
 
-		privateStoreKey, publicStoreKey, err := createStoreKeyPairFromSigningKey(signingKey)
+		existingKeys, err := r.getNonExpiredPrivateKeys()
 		if err != nil {
-			panic(fmt.Errorf("failed to create key pair from signing key: %w", err))
+			panic(fmt.Errorf("failed to get private keys: %w", err))
 		}
+		if len(existingKeys) > 0 {
+			// Private key already exists
+			signingKey, err := r.storedPrivateKeyToSigningKey(existingKeys[0])
+			if err != nil {
+				panic(err)
+			}
+			r.currentSigningKey.Store(signingKey)
+		} else {
+			signingKey, err := r.createNewSigningKey()
+			if err != nil {
+				panic(fmt.Sprintf("failed to create new signing key: %v", err))
+			}
 
-		err = r.storeKeyPair(privateStoreKey, publicStoreKey)
-		if err != nil {
-			panic(fmt.Errorf("failed to store key pair: %w", err))
+			privateStoreKey, publicStoreKey, err := createStoreKeyPairFromSigningKey(signingKey)
+			if err != nil {
+				panic(fmt.Errorf("failed to create key pair from signing key: %w", err))
+			}
+
+			if err := r.store.Add(lock, privateStoreKey, publicStoreKey); err != nil {
+				panic(fmt.Errorf("failed to store new key pair: %w", err))
+			}
+			r.currentSigningKey.Store(signingKey)
 		}
-
-		r.currentSigningKey.Store(signingKey)
 	}
 }
 
@@ -221,7 +227,7 @@ func (r *ring) SigningKey() (*SigningKey, error) {
 	}
 
 	if time.Now().After(key.RotatedAt) {
-		newKey, err := r.rotateSigningKey()
+		newKey, err := r.rotateSigningKey(true)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrKeyRotation, err)
 		}
@@ -281,15 +287,37 @@ func (r *ring) ListVerifiers() ([]*VerifierKey, error) {
 }
 
 func (r *ring) Rotate() error {
-	_, err := r.rotateSigningKey()
+	_, err := r.rotateSigningKey(false)
 	return err
 }
 
-func (r *ring) rotateSigningKey() (*SigningKey, error) {
+func (r *ring) rotateSigningKey(reuseExisting bool) (*SigningKey, error) {
 	val, err := r.rotatehOnce.Do(func() (interface{}, error) {
 		defer func() {
 			r.rotatehOnce = &once.ValueError{}
 		}()
+
+		lock, err := r.store.Lock()
+		if err != nil {
+			return nil, err
+		}
+		defer r.store.Unlock(lock)
+
+		if reuseExisting {
+			existingKeys, err := r.getNonExpiredPrivateKeys()
+			if err != nil {
+				return nil, err
+			}
+			if len(existingKeys) > 0 {
+				// Private key already exists
+				newSigningKey, err := r.storedPrivateKeyToSigningKey(existingKeys[0])
+				if err != nil {
+					return nil, err
+				}
+				r.currentSigningKey.Store(newSigningKey)
+				return newSigningKey, nil
+			}
+		}
 
 		newSigningKey, err := r.createNewSigningKey()
 		if err != nil {
@@ -301,7 +329,7 @@ func (r *ring) rotateSigningKey() (*SigningKey, error) {
 			return nil, err
 		}
 
-		if err = r.storeKeyPair(privateStoreKey, publicStoreKey); err != nil {
+		if err := r.store.Add(lock, privateStoreKey, publicStoreKey); err != nil {
 			return nil, err
 		}
 

@@ -29,7 +29,12 @@ func TestAddAndFind(t *testing.T) {
 	s := getStore()
 
 	k := dummyKey()
-	s.Add(k)
+	lock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Unlock(lock)
+	s.Add(lock, k)
 
 	sk, err := s.Find(k.ID)
 	if err != nil {
@@ -66,12 +71,16 @@ func TestAddConflict(t *testing.T) {
 	s := getStore()
 
 	k := dummyKey()
-	err := s.Add(k)
+	lock, err := s.Lock()
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Unlock(lock)
+	if err := s.Add(lock, k); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	err = s.Add(k)
+	err = s.Add(lock, k)
 	if err == nil {
 		t.Errorf("expected error, did not get one")
 	}
@@ -85,13 +94,16 @@ func TestDeleteKey(t *testing.T) {
 	s := getStore()
 
 	k := dummyKey()
-	err := s.Add(k)
+	lock, err := s.Lock()
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Unlock(lock)
+	if err := s.Add(lock, k); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	err = s.Delete(k.ID)
-	if err != nil {
+	if err := s.Delete(k.ID); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
@@ -111,13 +123,13 @@ func TestListKeys(t *testing.T) {
 	k2 := dummyKey()
 	k3 := dummyKey()
 
-	if err := s.Add(k1); err != nil {
-		t.Errorf("unexpected error: %v", err)
+	lock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := s.Add(k2); err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if err := s.Add(k3); err != nil {
+	defer s.Unlock(lock)
+
+	if err := s.Add(lock, k1, k2, k3); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
